@@ -136,6 +136,13 @@ func decodeBodyToStruct(body hcl.Body, ctx *hcl.EvalContext, val reflect.Value) 
 			fieldV.Set(reflect.ValueOf(attr))
 		case exprType.AssignableTo(field.Type):
 			fieldV.Set(reflect.ValueOf(attr.Expr))
+		case field.Type.Kind() == reflect.Ptr && field.Type.Elem().Kind() == reflect.Struct:
+			// TODO might want to check for nil here
+			rn := reflect.New(field.Type.Elem())
+			fieldV.Set(rn)
+			diags = append(diags, DecodeExpression(
+				attr.Expr, ctx, fieldV.Interface(),
+			)...)
 		default:
 			diags = append(diags, DecodeExpression(
 				attr.Expr, ctx, fieldV.Addr().Interface(),
@@ -301,7 +308,9 @@ func decodeBlockToValue(block *hcl.Block, ctx *hcl.EvalContext, v reflect.Value)
 
 // DecodeExpression extracts the value of the given expression into the given
 // value. This value must be something that gocty is able to decode into,
-// since the final decoding is delegated to that package.
+// since the final decoding is delegated to that package.  If a reference to
+// a struct is provided which contains gohcl tags, it will be decoded using
+// the attr and optional tags.
 //
 // The given EvalContext is used to resolve any variables or functions in
 // expressions encountered while decoding. This may be nil to require only
@@ -315,11 +324,50 @@ func decodeBlockToValue(block *hcl.Block, ctx *hcl.EvalContext, v reflect.Value)
 // integration use-cases.
 func DecodeExpression(expr hcl.Expression, ctx *hcl.EvalContext, val interface{}) hcl.Diagnostics {
 	srcVal, diags := expr.Value(ctx)
+	if diags.HasErrors() {
+		return diags
+	}
+
+	return append(diags, DecodeValue(srcVal, expr.StartRange(), expr.Range(), val)...)
+}
+
+// DecodeValue extracts the given value into the provided target.
+// This value must be something that gocty is able to decode into,
+// since the final decoding is delegated to that package.  If a reference to
+// a struct is provided which contains gohcl tags, it will be decoded using
+// the attr and optional tags.
+//
+// The returned diagnostics should be inspected with its HasErrors method to
+// determine if the populated value is valid and complete. If error diagnostics
+// are returned then the given value may have been partially-populated but
+// may still be accessed by a careful caller for static analysis and editor
+// integration use-cases.
+func DecodeValue(srcVal cty.Value, subject hcl.Range, context hcl.Range, val interface{}) hcl.Diagnostics {
+	rv := reflect.ValueOf(val)
+	if rv.Type().Kind() == reflect.Ptr && rv.Type().Elem().Kind() == reflect.Struct && hasFieldTags(rv.Elem().Type()) {
+		attrs := make(hcl.Attributes)
+		for k, v := range srcVal.AsValueMap() {
+			attrs[k] = &hcl.Attribute{
+				Name:  k,
+				Expr:  hcl.StaticExpr(v, context),
+				Range: subject,
+			}
+
+		}
+		return decodeBodyToStruct(synthBody{
+			attrs:   attrs,
+			subject: subject,
+			context: context,
+		}, nil, rv.Elem())
+
+	}
 
 	convTy, err := gocty.ImpliedType(val)
 	if err != nil {
 		panic(fmt.Sprintf("unsuitable DecodeExpression target: %s", err))
 	}
+
+	var diags hcl.Diagnostics
 
 	srcVal, err = convert.Convert(srcVal, convTy)
 	if err != nil {
@@ -327,8 +375,8 @@ func DecodeExpression(expr hcl.Expression, ctx *hcl.EvalContext, val interface{}
 			Severity: hcl.DiagError,
 			Summary:  "Unsuitable value type",
 			Detail:   fmt.Sprintf("Unsuitable value: %s", err.Error()),
-			Subject:  expr.StartRange().Ptr(),
-			Context:  expr.Range().Ptr(),
+			Subject:  subject.Ptr(),
+			Context:  context.Ptr(),
 		})
 		return diags
 	}
@@ -339,10 +387,80 @@ func DecodeExpression(expr hcl.Expression, ctx *hcl.EvalContext, val interface{}
 			Severity: hcl.DiagError,
 			Summary:  "Unsuitable value type",
 			Detail:   fmt.Sprintf("Unsuitable value: %s", err.Error()),
-			Subject:  expr.StartRange().Ptr(),
-			Context:  expr.Range().Ptr(),
+			Subject:  subject.Ptr(),
+			Context:  context.Ptr(),
 		})
 	}
 
 	return diags
+}
+
+type synthBody struct {
+	attrs   hcl.Attributes
+	subject hcl.Range
+	context hcl.Range
+}
+
+func (s synthBody) Content(schema *hcl.BodySchema) (*hcl.BodyContent, hcl.Diagnostics) {
+	body, partial, diags := s.PartialContent(schema)
+
+	attrs, _ := partial.JustAttributes()
+	for name := range attrs {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unsupported argument",
+			Detail:   fmt.Sprintf("An argument named %q is not expected here.", name),
+			Subject:  s.subject.Ptr(),
+			Context:  s.context.Ptr(),
+		})
+	}
+
+	return body, diags
+}
+
+func (s synthBody) PartialContent(schema *hcl.BodySchema) (*hcl.BodyContent, hcl.Body, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+
+	for _, block := range schema.Blocks {
+		panic("hcl block tags are not allowed in attribute structs: " + block.Type)
+	}
+
+	attrs := make(hcl.Attributes)
+	remainder := make(hcl.Attributes)
+
+	for _, attr := range schema.Attributes {
+		v, ok := s.attrs[attr.Name]
+		if !ok {
+			if attr.Required {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Missing required argument",
+					Detail:   fmt.Sprintf("The argument %q is required, but no definition was found.", attr.Name),
+					Subject:  s.subject.Ptr(),
+					Context:  s.context.Ptr(),
+				})
+			}
+			continue
+		}
+
+		attrs[attr.Name] = v
+	}
+
+	for k, v := range s.attrs {
+		if _, ok := attrs[k]; !ok {
+			remainder[k] = v
+		}
+	}
+
+	return &hcl.BodyContent{
+		Attributes:       attrs,
+		MissingItemRange: s.context,
+	}, synthBody{attrs: remainder}, diags
+}
+
+func (s synthBody) JustAttributes() (hcl.Attributes, hcl.Diagnostics) {
+	return s.attrs, nil
+}
+func (s synthBody) MissingItemRange() hcl.Range {
+	return s.context
 }

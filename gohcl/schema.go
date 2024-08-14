@@ -111,6 +111,18 @@ func ImpliedBodySchema(val interface{}) (schema *hcl.BodySchema, partial bool) {
 	return schema, partial
 }
 
+func hasFieldTags(ty reflect.Type) bool {
+	ct := ty.NumField()
+	for i := 0; i < ct; i++ {
+		field := ty.Field(i)
+		tag := field.Tag.Get("hcl")
+		if tag != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type fieldTags struct {
 	Attributes map[string]int
 	Blocks     map[string]int
