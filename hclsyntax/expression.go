@@ -1961,6 +1961,22 @@ func (e *SplatExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 	}
 }
 
+func (e *SplatExpr) AsTraversal() hcl.Traversal {
+	st, diags := hcl.AbsTraversalForExpr(e.Source)
+	if diags.HasErrors() {
+		return nil
+	}
+	et, diags := hcl.AbsTraversalForExpr(e.Each)
+	if diags.HasErrors() {
+		return nil
+	}
+	traversal := make(hcl.Traversal, len(st)+1+len(et))
+	copy(traversal, st)
+	copy(traversal[len(st):], []hcl.Traverser{hcl.TraverseSplat{}})
+	copy(traversal[len(st)+1:], et)
+	return traversal
+}
+
 func (e *SplatExpr) walkChildNodes(w internalWalkFunc) {
 	w(e.Source)
 	w(e.Each)
