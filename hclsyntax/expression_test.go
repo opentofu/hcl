@@ -2917,6 +2917,85 @@ func TestExpressionAsTraversal(t *testing.T) {
 	}
 }
 
+func TestSplatExpressionXAsTraversal(t *testing.T) {
+	expr, _ := ParseExpression([]byte("module.team[\"team_b\"].module.player[\"c\"].random_pet.ball[*]"), "", hcl.Pos{})
+	traversal, diags := hcl.AbsTraversalForExpr(expr)
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics:\n%s", diags.Error())
+	}
+	if len(traversal) != 9 {
+		t.Fatalf("wrong traversal %#v; want length 9", traversal)
+	}
+	if traversal.RootName() != "module" {
+		t.Errorf("wrong root name %q; want %q", traversal.RootName(), "a")
+	}
+	if step, ok := traversal[1].(hcl.TraverseAttr); ok {
+		if got, want := step.Name, "team"; got != want {
+			t.Errorf("wrong name %q for step 1; want %q", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 1; want %T", traversal[1], step)
+	}
+	if step, ok := traversal[2].(hcl.TraverseIndex); ok {
+		if got, want := step.Key, cty.StringVal("team_b"); !want.RawEquals(got) {
+			t.Errorf("wrong name %#v for step 2; want %#v", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 2; want %T", traversal[2], step)
+	}
+	if step, ok := traversal[3].(hcl.TraverseAttr); ok {
+		if got, want := step.Name, "module"; got != want {
+			t.Errorf("wrong name %q for step 3; want %q", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 3; want %T", traversal[3], step)
+	}
+	if step, ok := traversal[8].(hcl.TraverseSplat); !ok {
+		t.Errorf("wrong type %T for step 8; want %T", traversal[8], step)
+	}
+}
+
+func TestSplatExpressionYAsTraversal(t *testing.T) {
+	expr, _ := ParseExpression([]byte("module.team[*].module.player[*].random_pet.ball[\"blue\"]"), "", hcl.Pos{})
+	traversal, diags := hcl.AbsTraversalForExpr(expr)
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics:\n%s", diags.Error())
+	}
+	if len(traversal) != 9 {
+		t.Fatalf("wrong traversal %#v; want length 9", traversal)
+	}
+	if traversal.RootName() != "module" {
+		t.Errorf("wrong root name %q; want %q", traversal.RootName(), "a")
+	}
+	if step, ok := traversal[1].(hcl.TraverseAttr); ok {
+		if got, want := step.Name, "team"; got != want {
+			t.Errorf("wrong name %q for step 1; want %q", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 1; want %T", traversal[1], step)
+	}
+	if step, ok := traversal[2].(hcl.TraverseSplat); !ok {
+		t.Errorf("wrong type %T for step 2; want %T", traversal[2], step)
+	}
+	if step, ok := traversal[3].(hcl.TraverseAttr); ok {
+		if got, want := step.Name, "module"; got != want {
+			t.Errorf("wrong name %q for step 3; want %q", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 3; want %T", traversal[3], step)
+	}
+	if step, ok := traversal[5].(hcl.TraverseSplat); !ok {
+		t.Errorf("wrong type %T for step 5; want %T", traversal[5], step)
+	}
+	if step, ok := traversal[8].(hcl.TraverseIndex); ok {
+		if got, want := step.Key, cty.StringVal("blue"); !want.RawEquals(got) {
+			t.Errorf("wrong name %#v for step 8; want %#v", got, want)
+		}
+	} else {
+		t.Errorf("wrong type %T for step 8; want %T", traversal[8], step)
+	}
+}
+
 func TestStaticExpressionList(t *testing.T) {
 	expr, _ := ParseExpression([]byte("[0, a, true]"), "", hcl.Pos{})
 	exprs, diags := hcl.ExprList(expr)

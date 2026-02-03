@@ -185,10 +185,14 @@ func (e *RelativeTraversalExpr) StartRange() hcl.Range {
 
 // Implementation for hcl.AbsTraversalForExpr.
 func (e *RelativeTraversalExpr) AsTraversal() hcl.Traversal {
+	var st hcl.Traversal
+	var diags hcl.Diagnostics
 	// We can produce a traversal only if our source can.
-	st, diags := hcl.AbsTraversalForExpr(e.Source)
-	if diags.HasErrors() {
-		return nil
+	if _, ok := e.Source.(*AnonSymbolExpr); !ok {
+		st, diags = hcl.AbsTraversalForExpr(e.Source)
+		if diags.HasErrors() {
+			return nil
+		}
 	}
 
 	ret := make(hcl.Traversal, len(st)+len(e.Traversal))
@@ -1354,10 +1358,14 @@ func (e *ObjectConsKeyExpr) AsTraversal() hcl.Traversal {
 		return nil
 	}
 
+	var st hcl.Traversal
+	var diags hcl.Diagnostics
 	// We can produce a traversal only if our wrappee can.
-	st, diags := hcl.AbsTraversalForExpr(e.Wrapped)
-	if diags.HasErrors() {
-		return nil
+	if _, ok := e.Wrapped.(*AnonSymbolExpr); !ok {
+		st, diags = hcl.AbsTraversalForExpr(e.Wrapped)
+		if diags.HasErrors() {
+			return nil
+		}
 	}
 
 	return st
@@ -1962,13 +1970,20 @@ func (e *SplatExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostics) {
 }
 
 func (e *SplatExpr) AsTraversal() hcl.Traversal {
-	st, diags := hcl.AbsTraversalForExpr(e.Source)
-	if diags.HasErrors() {
-		return nil
+	var et, st hcl.Traversal
+	var diags hcl.Diagnostics
+	// We need to double-check that there's anything after this expression, or if it's just empty
+	if _, ok := e.Source.(*AnonSymbolExpr); !ok {
+		st, diags = hcl.AbsTraversalForExpr(e.Source)
+		if diags.HasErrors() {
+			return nil
+		}
 	}
-	et, diags := hcl.AbsTraversalForExpr(e.Each)
-	if diags.HasErrors() {
-		return nil
+	if _, ok := e.Each.(*AnonSymbolExpr); !ok {
+		et, diags = hcl.AbsTraversalForExpr(e.Each)
+		if diags.HasErrors() {
+			return nil
+		}
 	}
 	traversal := make(hcl.Traversal, len(st)+1+len(et))
 	copy(traversal, st)
