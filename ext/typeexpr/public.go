@@ -18,7 +18,7 @@ import (
 // successful, returns the resulting type. If unsuccessful, error diagnostics
 // are returned.
 func Type(expr hcl.Expression) (cty.Type, hcl.Diagnostics) {
-	ty, _, diags := getType(expr, false, false)
+	ty, _, diags := getType(expr, false, false, TypeContext{})
 	return ty, diags
 }
 
@@ -30,7 +30,7 @@ func Type(expr hcl.Expression) (cty.Type, hcl.Diagnostics) {
 // allows the keyword "any" to represent cty.DynamicPseudoType, which is often
 // used as a wildcard in type checking and type conversion operations.
 func TypeConstraint(expr hcl.Expression) (cty.Type, hcl.Diagnostics) {
-	ty, _, diags := getType(expr, true, false)
+	ty, _, diags := getType(expr, true, false, TypeContext{})
 	return ty, diags
 }
 
@@ -39,7 +39,7 @@ func TypeConstraint(expr hcl.Expression) (cty.Type, hcl.Diagnostics) {
 // successful both the resulting type and corresponding defaults are returned.
 // If unsuccessful, error diagnostics are returned.
 func TypeConstraintWithDefaults(expr hcl.Expression) (cty.Type, *Defaults, hcl.Diagnostics) {
-	return getType(expr, true, true)
+	return getType(expr, true, true, TypeContext{})
 }
 
 // TypeString returns a string rendering of the given type as it would be

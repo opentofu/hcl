@@ -19,7 +19,7 @@ const invalidTypeSummary = "Invalid type specification"
 // `constraint` is true, the "any" keyword can be used in place of a concrete
 // type. When `withDefaults` is true, the "optional" call expression supports
 // an additional argument describing a default value.
-func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Defaults, hcl.Diagnostics) {
+func getType(expr hcl.Expression, constraint, withDefaults bool, typeCtx TypeContext) (cty.Type, *Defaults, hcl.Diagnostics) {
 	// First we'll try for one of our keywords
 	kw := hcl.ExprAsKeyword(expr)
 	switch kw {
@@ -141,15 +141,15 @@ func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Def
 	switch call.Name {
 
 	case "list":
-		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults)
+		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults, typeCtx)
 		ty := cty.List(ety)
 		return ty, collectionDefaults(ty, defaults), diags
 	case "set":
-		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults)
+		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults, typeCtx)
 		ty := cty.Set(ety)
 		return ty, collectionDefaults(ty, defaults), diags
 	case "map":
-		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults)
+		ety, defaults, diags := getType(call.Arguments[0], constraint, withDefaults, typeCtx)
 		ty := cty.Map(ety)
 		return ty, collectionDefaults(ty, defaults), diags
 	case "object":
@@ -259,7 +259,7 @@ func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Def
 				}
 			}
 
-			aty, aDefaults, attrDiags := getType(atyExpr, constraint, withDefaults)
+			aty, aDefaults, attrDiags := getType(atyExpr, constraint, withDefaults, typeCtx)
 			diags = append(diags, attrDiags...)
 
 			// If a default is set for an optional attribute, verify that it is
@@ -300,7 +300,7 @@ func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Def
 		etys := make([]cty.Type, len(elemDefs))
 		children := make(map[string]*Defaults, len(elemDefs))
 		for i, defExpr := range elemDefs {
-			ety, elemDefaults, elemDiags := getType(defExpr, constraint, withDefaults)
+			ety, elemDefaults, elemDiags := getType(defExpr, constraint, withDefaults, typeCtx)
 			diags = append(diags, elemDiags...)
 			etys[i] = ety
 			if elemDefaults != nil {
@@ -317,6 +317,14 @@ func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Def
 			Subject:  call.NameRange.Ptr(),
 		}}
 	default:
+		kw := hcl.ExprAsKeyword(call.Arguments[0])
+		ns := call.Name
+
+		if types, ok := typeCtx.Types[ns]; ok {
+			if kwt, ok := types[kw]; ok {
+				return kwt, typeCtx.Defaults[ns][kw], nil
+			}
+		}
 		// Can't access call.Arguments in this path because we've not validated
 		// that it contains exactly one expression here.
 		return cty.DynamicPseudoType, nil, hcl.Diagnostics{{
@@ -324,6 +332,10 @@ func getType(expr hcl.Expression, constraint, withDefaults bool) (cty.Type, *Def
 			Summary:  invalidTypeSummary,
 			Detail:   fmt.Sprintf("Keyword %q is not a valid type constructor.", call.Name),
 			Subject:  expr.Range().Ptr(),
+			Extra: DiagnosticExtraTypeMissing{
+				Namespace: ns,
+				TypeName:  kw,
+			},
 		}}
 	}
 }
