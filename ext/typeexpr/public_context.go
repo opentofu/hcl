@@ -6,8 +6,7 @@ import (
 )
 
 type TypeContext struct {
-	Types    map[string]map[string]cty.Type
-	Defaults map[string]map[string]*Defaults
+	TypeFunc func(*hcl.StaticCall) (*cty.Type, *Defaults, hcl.Diagnostics)
 }
 
 // Type attempts to process the given expression as a type expression and, if
@@ -38,15 +37,15 @@ func (t TypeContext) TypeConstraintWithDefaults(expr hcl.Expression) (cty.Type, 
 	return getType(expr, true, true, t)
 }
 
-func (t TypeContext) TypeDependencies(expr hcl.Expression) (map[string][]string, hcl.Diagnostics) {
+func (t TypeContext) TypeDependencies(expr hcl.Expression) ([]*hcl.StaticCall, hcl.Diagnostics) {
 	_, _, diags := getType(expr, true, true, t)
 
-	missing := map[string][]string{}
+	var missing []*hcl.StaticCall
 	var filtered hcl.Diagnostics
 
 	for _, diag := range diags {
 		if tm, ok := diag.Extra.(DiagnosticExtraTypeMissing); ok {
-			missing[tm.Namespace] = append(missing[tm.Namespace], tm.TypeName)
+			missing = append(missing, tm.Call)
 		} else {
 			filtered = append(filtered, diag)
 		}
@@ -56,6 +55,5 @@ func (t TypeContext) TypeDependencies(expr hcl.Expression) (map[string][]string,
 }
 
 type DiagnosticExtraTypeMissing struct {
-	Namespace string
-	TypeName  string
+	Call *hcl.StaticCall
 }

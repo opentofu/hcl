@@ -317,14 +317,14 @@ func getType(expr hcl.Expression, constraint, withDefaults bool, typeCtx TypeCon
 			Subject:  call.NameRange.Ptr(),
 		}}
 	default:
-		kw := hcl.ExprAsKeyword(call.Arguments[0])
-		ns := call.Name
-
-		if types, ok := typeCtx.Types[ns]; ok {
-			if kwt, ok := types[kw]; ok {
-				return kwt, typeCtx.Defaults[ns][kw], nil
+		if fn := typeCtx.TypeFunc; fn != nil {
+			ty, def, tyDiags := fn(call)
+			diags = append(diags, tyDiags...)
+			if ty != nil {
+				return *ty, def, diags
 			}
 		}
+
 		// Can't access call.Arguments in this path because we've not validated
 		// that it contains exactly one expression here.
 		return cty.DynamicPseudoType, nil, hcl.Diagnostics{{
@@ -332,10 +332,7 @@ func getType(expr hcl.Expression, constraint, withDefaults bool, typeCtx TypeCon
 			Summary:  invalidTypeSummary,
 			Detail:   fmt.Sprintf("Keyword %q is not a valid type constructor.", call.Name),
 			Subject:  expr.Range().Ptr(),
-			Extra: DiagnosticExtraTypeMissing{
-				Namespace: ns,
-				TypeName:  kw,
-			},
+			Extra:    DiagnosticExtraTypeMissing{Call: call},
 		}}
 	}
 }
