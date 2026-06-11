@@ -19,7 +19,7 @@ import (
 // other configurationg syntaxes, such as JSON.
 func ParseConfig(src []byte, filename string, start hcl.Pos) (*hcl.File, hcl.Diagnostics) {
 	tokens, diags := LexConfig(src, filename, start)
-	peeker := newPeeker(tokens, false)
+	peeker := newPeeker(tokens, true)
 	parser := &parser{peeker: peeker}
 	body, parseDiags := parser.ParseBody(TokenEOF)
 	diags = append(diags, parseDiags...)
@@ -43,7 +43,7 @@ func ParseConfig(src []byte, filename string, start hcl.Pos) (*hcl.File, hcl.Dia
 // returning it as an instance of Expression.
 func ParseExpression(src []byte, filename string, start hcl.Pos) (Expression, hcl.Diagnostics) {
 	tokens, diags := LexExpression(src, filename, start)
-	peeker := newPeeker(tokens, false)
+	peeker := newPeeker(tokens, true)
 	parser := &parser{peeker: peeker}
 
 	// Bare expressions are always parsed in  "ignore newlines" mode, as if
@@ -77,7 +77,7 @@ func ParseExpression(src []byte, filename string, start hcl.Pos) (Expression, hc
 // returning it as an instance of Expression.
 func ParseTemplate(src []byte, filename string, start hcl.Pos) (Expression, hcl.Diagnostics) {
 	tokens, diags := LexTemplate(src, filename, start)
-	peeker := newPeeker(tokens, false)
+	peeker := newPeeker(tokens, true)
 	parser := &parser{peeker: peeker}
 	expr, parseDiags := parser.ParseTemplate()
 	diags = append(diags, parseDiags...)
@@ -98,7 +98,7 @@ func ParseTemplate(src []byte, filename string, start hcl.Pos) (Expression, hcl.
 // evaluating them.
 func ParseTraversalAbs(src []byte, filename string, start hcl.Pos) (hcl.Traversal, hcl.Diagnostics) {
 	tokens, diags := LexExpression(src, filename, start)
-	peeker := newPeeker(tokens, false)
+	peeker := newPeeker(tokens, true)
 	parser := &parser{peeker: peeker}
 
 	// Bare traverals are always parsed in  "ignore newlines" mode, as if
@@ -132,7 +132,7 @@ func ParseTraversalAbs(src []byte, filename string, start hcl.Pos) (hcl.Traversa
 // from concrete traversals.
 func ParseTraversalAbsPattern(src []byte, filename string, start hcl.Pos) (hcl.Traversal, hcl.Diagnostics) {
 	tokens, diags := LexExpression(src, filename, start)
-	peeker := newPeeker(tokens, false)
+	peeker := newPeeker(tokens, true)
 	parser := &parser{peeker: peeker}
 
 	// Bare traverals are always parsed in  "ignore newlines" mode, as if
