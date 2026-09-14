@@ -31,7 +31,7 @@ func (b *Block) AsHCLBlock() *hcl.Block {
 type Body struct {
 	Attributes Attributes
 	Blocks     Blocks
-	Comments   Comments
+	Comments   hcl.Comments
 
 	// These are used with PartialContent to produce a "remaining items"
 	// body to return. They are nil on all bodies fresh out of the parser.
@@ -241,6 +241,7 @@ func (b *Body) PartialContent(schema *hcl.BodySchema) (*hcl.BodyContent, hcl.Bod
 	return &hcl.BodyContent{
 		Attributes: attrs,
 		Blocks:     blocks,
+		Comments:   b.Comments,
 
 		MissingItemRange: b.MissingItemRange(),
 	}, remain, diags
@@ -352,16 +353,6 @@ func (bs Blocks) walkChildNodes(w internalWalkFunc) {
 	for _, block := range bs {
 		w(block)
 	}
-}
-
-type Comments []*Comment
-
-// Comment represents a nested block structure
-type Comment struct {
-	Content string
-
-	StartRange hcl.Range
-	StopRange  hcl.Range
 }
 
 // Range returns the range of some arbitrary point within the list of
