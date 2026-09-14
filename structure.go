@@ -35,6 +35,15 @@ type Blocks []*Block
 // Attributes is a set of attributes keyed by their names.
 type Attributes map[string]*Attribute
 
+type Comments []*Comment
+
+type Comment struct {
+	Content string
+
+	StartRange Range
+	StopRange  Range
+}
+
 // Body is a container for attributes and blocks. It serves as the primary
 // unit of hierarchical structure within configuration.
 //
@@ -80,6 +89,7 @@ type Body interface {
 type BodyContent struct {
 	Attributes Attributes
 	Blocks     Blocks
+	Comments   Comments // TODO andrei check where this is BodyContent is returned and ensure that commments are returned correctly
 
 	MissingItemRange Range
 }
