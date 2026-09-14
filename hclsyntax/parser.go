@@ -27,7 +27,7 @@ type parser struct {
 func (p *parser) ParseBody(end TokenType) (*Body, hcl.Diagnostics) {
 	attrs := Attributes{}
 	blocks := Blocks{}
-	comments := Comments{}
+	comments := hcl.Comments{}
 	var diags hcl.Diagnostics
 
 	startRange := p.PrevRange()
@@ -79,7 +79,7 @@ Token:
 			}
 		case TokenComment:
 			comm := p.Read()
-			comments = append(comments, &Comment{
+			comments = append(comments, &hcl.Comment{
 				Content:    string(comm.Bytes),
 				StartRange: comm.Range,
 			})
