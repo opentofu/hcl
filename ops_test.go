@@ -5,9 +5,11 @@ package hcl
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/ctymarks"
 )
 
 func TestApplyPath(t *testing.T) {
@@ -327,7 +329,11 @@ func TestApplyPath(t *testing.T) {
 				"foo": cty.StringVal("should be marked"),
 			}).Mark("marked"),
 			(cty.Path)(nil).Index(cty.UnknownVal(cty.String)),
-			cty.DynamicVal.Mark("marked"),
+			cty.UnknownVal(cty.String).Refine().
+				NotNull().
+				StringPrefixFull("should be marked"). // because the only non-error outcome has this prefix
+				NewValue().
+				Mark("marked"),
 			``,
 		},
 		{
@@ -347,7 +353,11 @@ func TestApplyPath(t *testing.T) {
 		{
 			cty.ListVal([]cty.Value{cty.StringVal("should be marked")}).Mark("marked"),
 			(cty.Path)(nil).Index(cty.UnknownVal(cty.Number)),
-			cty.UnknownVal(cty.String).Mark("marked"),
+			cty.UnknownVal(cty.String).Refine().
+				NotNull().
+				StringPrefixFull("should be marked"). // because the only non-error outcome has this prefix
+				NewValue().
+				Mark("marked"),
 			``,
 		},
 		{
@@ -426,7 +436,29 @@ func TestIndex(t *testing.T) {
 				cty.StringVal("a"),
 			}),
 			key:  cty.DynamicVal,
+			want: cty.UnknownVal(cty.String),
+		},
+		"dynamic key with marks": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("a").Mark(prvnMark("a")),
+			}).Mark(2),
+			key:  cty.DynamicVal.Mark(1),
+			want: cty.UnknownVal(cty.String).Mark(1).Mark(2).Mark(prvnMark("a")),
+		},
+		"dynamic collection": {
+			coll: cty.DynamicVal,
+			key:  cty.StringVal("a"),
 			want: cty.DynamicVal,
+		},
+		"unknown collection with marks": {
+			coll: cty.UnknownValWithNestedMarks(cty.Map(cty.String), slices.Values([]any{prvnMark("a")})).Mark(1),
+			key:  cty.StringVal("a").Mark(2),
+			want: cty.UnknownVal(cty.String).Mark(1).Mark(2).Mark(prvnMark("a")),
+		},
+		"dynamic collection with marks": {
+			coll: cty.UnknownValWithNestedMarks(cty.DynamicPseudoType, slices.Values([]any{prvnMark("a")})).Mark(1),
+			key:  cty.StringVal("a").Mark(2),
+			want: cty.DynamicVal.Mark(1).Mark(2).Mark(prvnMark("a")),
 		},
 		"invalid marked key type": {
 			coll: cty.ListVal([]cty.Value{
@@ -491,6 +523,73 @@ func TestIndex(t *testing.T) {
 			want: cty.DynamicVal,
 			err:  "Invalid index",
 		},
+		"unknown key": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("beep"),
+				cty.StringVal("boop"),
+			}),
+			key: cty.UnknownVal(cty.Number),
+			want: cty.UnknownVal(cty.String).Refine().
+				NotNull().             // because none of the elements are null
+				StringPrefixFull("b"). // because all of the elements have this prefix in common
+				NewValue(),
+			err: "",
+		},
+		"unknown key with non-provenance-marked elements": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("beep").Mark("a"), // not a provenance mark, so ignored
+				cty.StringVal("boop").Mark("b"), // not a provenance mark, so ignored
+			}),
+			key: cty.UnknownVal(cty.Number),
+			want: cty.UnknownVal(cty.String).Refine().
+				NotNull().             // because none of the elements are null
+				StringPrefixFull("b"). // because all of the elements have this prefix in common
+				NewValue(),
+			err: "",
+		},
+		"unknown key with provenance-marked elements": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("beep").Mark(prvnMark("a")),
+				cty.StringVal("boop").Mark(prvnMark("b")),
+				cty.StringVal("foo").Mark(prvnMark("c")),
+			}),
+			key: cty.UnknownVal(cty.Number),
+			want: cty.UnknownVal(cty.String).RefineNotNull().
+				Mark(prvnMark("a")).
+				Mark(prvnMark("b")).
+				Mark(prvnMark("c")),
+			err: "",
+		},
+		"unknown key of unknown type with provenance-marked elements": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("beep").Mark(prvnMark("a")),
+				cty.StringVal("boop").Mark(prvnMark("b")),
+				cty.StringVal("foo").Mark(prvnMark("c")),
+			}),
+			key: cty.DynamicVal,
+			want: cty.UnknownVal(cty.String).
+				Mark(prvnMark("a")).
+				Mark(prvnMark("b")).
+				Mark(prvnMark("c")),
+			err: "",
+		},
+		"unknown-but-refined key with provenance-marked elements": {
+			coll: cty.ListVal([]cty.Value{
+				cty.StringVal("beep").Mark(prvnMark("a")),
+				cty.StringVal("boop").Mark(prvnMark("b")),
+				cty.StringVal("foo").Mark(prvnMark("c")),
+			}),
+			key: cty.UnknownVal(cty.Number).Refine().
+				NumberRangeUpperBound(cty.NumberIntVal(1), true).
+				NewValue(),
+			want: cty.UnknownVal(cty.String).Refine().
+				NotNull().             // because none of the elements are null
+				StringPrefixFull("b"). // because all of the _eligible_ elements have this prefix in common
+				NewValue().
+				Mark(prvnMark("a")).
+				Mark(prvnMark("b")), // "c" is excluded by the refinement on the key
+			err: "",
+		},
 	}
 
 	for name, tc := range tests {
@@ -525,4 +624,23 @@ func TestIndex(t *testing.T) {
 			}
 		})
 	}
+}
+
+// prvnMark constructs a [provenanceMarkForTesting] with the given string.
+func prvnMark(s string) any {
+	return provenanceMarkForTesting{
+		v: s,
+	}
+}
+
+// provenanceMarkForTesting is a special mark type used for testing against
+// cty features that have special treatment for "provenance marks" in
+// particular. Use [prvnMark] to construct marks of this type.
+type provenanceMarkForTesting struct {
+	v string
+	ctymarks.ProvenanceMark
+}
+
+func (m provenanceMarkForTesting) GoString() string {
+	return fmt.Sprintf("prvnMark(%q)", m.v)
 }

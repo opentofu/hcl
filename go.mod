@@ -11,7 +11,7 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/mitchellh/go-wordwrap v1.0.1
 	github.com/spf13/pflag v1.0.2
-	github.com/zclconf/go-cty v1.19.0
+	github.com/zclconf/go-cty v1.20.0
 	github.com/zclconf/go-cty-debug v0.0.0-20240509010212-0d6042c53940
 	golang.org/x/term v0.37.0
 	golang.org/x/tools v0.38.0

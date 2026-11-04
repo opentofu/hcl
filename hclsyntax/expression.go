@@ -5,6 +5,8 @@ package hclsyntax
 
 import (
 	"fmt"
+	"iter"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -786,7 +788,31 @@ func (e *ConditionalExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 			Expression:  e.Condition,
 			EvalContext: ctx,
 		})
-		return cty.UnknownVal(resultType), diags
+		return cty.UnknownChoice(pairSeq(trueResult, falseResult), false), diags
+	}
+
+	if !condResult.IsKnown() {
+		// We'll let cty's Cond method handle this situation because it has its
+		// own rules for returning a best possible placeholder for these
+		// two values.
+		placeholderVal := condResult.Cond(trueResult, falseResult)
+		placeholderVal, err := convert.Convert(placeholderVal, resultType)
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Inconsistent conditional result types",
+				Detail: fmt.Sprintf(
+					"The two result values do not have compatible types: %s.",
+					err.Error(),
+				),
+				Subject:     e.TrueResult.Range().Ptr(),
+				Context:     &e.SrcRange,
+				Expression:  e.TrueResult,
+				EvalContext: ctx,
+			})
+			placeholderVal = cty.DynamicVal
+		}
+		return placeholderVal, diags
 	}
 
 	// Now that we have all three values, collect all the marks for the result.
@@ -796,90 +822,16 @@ func (e *ConditionalExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 	condResult, condResultMarks := condResult.Unmark()
 	trueResult, trueResultMarks := trueResult.Unmark()
 	falseResult, falseResultMarks := falseResult.Unmark()
-	var resMarks []cty.ValueMarks
-	resMarks = append(resMarks, condResultMarks, trueResultMarks, falseResultMarks)
-
-	if !condResult.IsKnown() {
-		trueRange := trueResult.Range()
-		falseRange := falseResult.Range()
-
-		// if both branches are known to be null, then the result must still be null
-		if trueResult.IsNull() && falseResult.IsNull() {
-			return cty.NullVal(resultType).WithMarks(resMarks...), diags
+	if len(condResultMarks) != 0 {
+		if trueResultMarks == nil {
+			trueResultMarks = make(cty.ValueMarks)
 		}
-
-		// We might be able to offer a refined range for the result based on
-		// the two possible outcomes.
-		if trueResult.Type() == cty.Number && falseResult.Type() == cty.Number {
-			ref := cty.UnknownVal(cty.Number).Refine()
-			if trueRange.DefinitelyNotNull() && falseRange.DefinitelyNotNull() {
-				ref = ref.NotNull()
-			}
-
-			falseLo, falseLoInc := falseRange.NumberLowerBound()
-			falseHi, falseHiInc := falseRange.NumberUpperBound()
-			trueLo, trueLoInc := trueRange.NumberLowerBound()
-			trueHi, trueHiInc := trueRange.NumberUpperBound()
-
-			if falseLo.IsKnown() && trueLo.IsKnown() {
-				lo, loInc := falseLo, falseLoInc
-				switch {
-				case trueLo.LessThan(falseLo).True():
-					lo, loInc = trueLo, trueLoInc
-				case trueLo.Equals(falseLo).True():
-					loInc = trueLoInc || falseLoInc
-				}
-
-				ref = ref.NumberRangeLowerBound(lo, loInc)
-			}
-
-			if falseHi.IsKnown() && trueHi.IsKnown() {
-				hi, hiInc := falseHi, falseHiInc
-				switch {
-				case trueHi.GreaterThan(falseHi).True():
-					hi, hiInc = trueHi, trueHiInc
-				case trueHi.Equals(falseHi).True():
-					hiInc = trueHiInc || falseHiInc
-				}
-				ref = ref.NumberRangeUpperBound(hi, hiInc)
-			}
-
-			return ref.NewValue().WithMarks(resMarks...), diags
+		if falseResultMarks == nil {
+			falseResultMarks = make(cty.ValueMarks)
 		}
-
-		if trueResult.Type().IsCollectionType() && falseResult.Type().IsCollectionType() {
-			if trueResult.Type().Equals(falseResult.Type()) {
-				ref := cty.UnknownVal(resultType).Refine()
-				if trueRange.DefinitelyNotNull() && falseRange.DefinitelyNotNull() {
-					ref = ref.NotNull()
-				}
-
-				falseLo := falseRange.LengthLowerBound()
-				falseHi := falseRange.LengthUpperBound()
-				trueLo := trueRange.LengthLowerBound()
-				trueHi := trueRange.LengthUpperBound()
-
-				lo := falseLo
-				if trueLo < falseLo {
-					lo = trueLo
-				}
-
-				hi := falseHi
-				if trueHi > falseHi {
-					hi = trueHi
-				}
-
-				ref = ref.CollectionLengthLowerBound(lo).CollectionLengthUpperBound(hi)
-				return ref.NewValue().WithMarks(resMarks...), diags
-			}
-		}
-
-		ret := cty.UnknownVal(resultType)
-		if trueRange.DefinitelyNotNull() && falseRange.DefinitelyNotNull() {
-			ret = ret.RefineNotNull()
-		}
-		return ret.WithMarks(resMarks...), diags
 	}
+	maps.Copy(trueResultMarks, condResultMarks)
+	maps.Copy(falseResultMarks, condResultMarks)
 
 	condResult, err := convert.Convert(condResult, cty.Bool)
 	if err != nil {
@@ -892,7 +844,6 @@ func (e *ConditionalExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 			Expression:  e.Condition,
 			EvalContext: ctx,
 		})
-		return cty.UnknownVal(resultType), diags
 	}
 
 	if condResult.True() {
@@ -917,7 +868,7 @@ func (e *ConditionalExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 				trueResult = cty.UnknownVal(resultType)
 			}
 		}
-		return trueResult.WithMarks(resMarks...), diags
+		return trueResult.WithMarks(trueResultMarks), diags
 	} else {
 		diags = append(diags, falseDiags...)
 		if convs[1] != nil {
@@ -940,7 +891,7 @@ func (e *ConditionalExpr) Value(ctx *hcl.EvalContext) (cty.Value, hcl.Diagnostic
 				falseResult = cty.UnknownVal(resultType)
 			}
 		}
-		return falseResult.WithMarks(resMarks...), diags
+		return falseResult.WithMarks(falseResultMarks), diags
 	}
 }
 
@@ -2163,4 +2114,13 @@ func (e *ExprSyntaxError) Range() hcl.Range {
 
 func (e *ExprSyntaxError) StartRange() hcl.Range {
 	return e.SrcRange
+}
+
+func pairSeq[T any](a, b T) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		if !yield(a) {
+			return
+		}
+		yield(b)
+	}
 }
