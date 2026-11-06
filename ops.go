@@ -9,6 +9,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
+	"github.com/zclconf/go-cty/cty/ctymarks"
 )
 
 // Index is a helper function that performs the same operation as the index
@@ -49,7 +50,21 @@ func Index(collection, key cty.Value, srcRange *Range) (cty.Value, Diagnostics) 
 	ty := collection.Type()
 	kty := key.Type()
 	if kty == cty.DynamicPseudoType || ty == cty.DynamicPseudoType {
-		return cty.DynamicVal.WithSameMarks(collection), nil
+		// In these situations we don't have enough information to use
+		// cty.UnknownChoice effectively, and so we'll just construct a
+		// conservatively-marked unknown value ourselves.
+		_, keyMarks := key.Unmark()
+		_, collMarks, collNestedMarks := collection.UnmarkDirectAndNested()
+		for mark := range collNestedMarks {
+			if !ctymarks.IsProvenanceMark(mark) {
+				delete(collNestedMarks, mark)
+			}
+		}
+		retTy := cty.DynamicPseudoType
+		if ty.IsCollectionType() { // (if it's only the key whose type we don't know)
+			retTy = ty.ElementType()
+		}
+		return cty.UnknownVal(retTy).WithMarks(keyMarks, collMarks, collNestedMarks), nil
 	}
 
 	switch {
@@ -86,11 +101,11 @@ func Index(collection, key cty.Value, srcRange *Range) (cty.Value, Diagnostics) 
 		// traverse a marked object
 		has, _ := collection.HasIndex(key).Unmark()
 		if !has.IsKnown() {
-			if ty.IsTupleType() {
-				return cty.DynamicVal.WithSameMarks(collection), nil
-			} else {
-				return cty.UnknownVal(ty.ElementType()).WithSameMarks(collection), nil
-			}
+			// If we don't know whether the index is possible then at least
+			// one of the collection itself or the key is unknown, and so
+			// we'll return a best-effort approximation based on what we
+			// _do_ know.
+			return collection.Index(key), nil
 		}
 		if has.False() {
 			if (ty.IsListType() || ty.IsTupleType()) && key.Type().Equals(cty.Number) {
@@ -196,7 +211,9 @@ func Index(collection, key cty.Value, srcRange *Range) (cty.Value, Diagnostics) 
 			}
 		}
 		if !key.IsKnown() {
-			return cty.DynamicVal.WithSameMarks(collection), nil
+			// We'll let cty decide how to handle this unknown key, since it
+			// has its own rules for generating an unknown placeholder result.
+			return collection.GetAttrByValue(key), nil
 		}
 
 		key, _ = key.Unmark()
@@ -223,7 +240,9 @@ func Index(collection, key cty.Value, srcRange *Range) (cty.Value, Diagnostics) 
 		}
 
 		if !collection.IsKnown() {
-			return cty.UnknownVal(ty.AttributeType(attrName)).WithSameMarks(collection), nil
+			// We'll let cty decide how to handle this unknown collection, since
+			// it has its own rules for generating an unknown placeholder result.
+			return collection.GetAttrByValue(key), nil
 		}
 
 		return collection.GetAttr(attrName), nil
@@ -415,6 +434,20 @@ func ApplyPath(val cty.Value, path cty.Path, srcRange *Range) (cty.Value, Diagno
 			val, stepDiags = Index(val, ts.Key, srcRange)
 		case cty.GetAttrStep:
 			val, stepDiags = GetAttr(val, ts.Name, srcRange)
+		case cty.UnknownNestedSteps:
+			// This one is a special placeholder for one or more not-yet-known
+			// steps beneath an unknown value. We'll just use cty's own
+			// implementation of applying this one, since it's straightforward.
+			var err error
+			val, err = ts.Apply(val)
+			if err != nil {
+				stepDiags = stepDiags.Append(&Diagnostic{
+					Severity: DiagError,
+					Summary:  "Invalid path",
+					Detail:   fmt.Sprintf("Cannot traverse through this value: %s.", err),
+					Subject:  srcRange,
+				})
+			}
 		default:
 			// Should never happen because the above are all of the step types.
 			diags = diags.Append(&Diagnostic{

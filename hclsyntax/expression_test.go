@@ -2225,8 +2225,7 @@ EOT
 					"jm":      cty.UnknownVal(cty.Number).Mark("b"),
 				},
 			},
-			// the empty refinement may eventually be removed, but does nothing here
-			cty.UnknownVal(cty.Number).Refine().NewValue().Mark("a").Mark("b"),
+			cty.UnknownVal(cty.Number).Mark("a").Mark("b"),
 			0,
 		},
 		{
@@ -2238,8 +2237,7 @@ EOT
 					"jx":      cty.UnknownVal(cty.Number),
 				},
 			},
-			// the empty refinement may eventually be removed, but does nothing here
-			cty.UnknownVal(cty.Number).Refine().NewValue(),
+			cty.UnknownVal(cty.Number),
 			0,
 		},
 		{
@@ -2255,8 +2253,14 @@ EOT
 						NumberRangeUpperBound(cty.NumberIntVal(4), true).NewValue(),
 				},
 			},
+			// cty's resolution of an "unknown choice" involving values
+			// currently always produces inclusive bounds regardless of the
+			// input. If that changes in future then the lower bound may start
+			// appearing as exclusive here, in which case it's okay to update
+			// this test to match that because that's a more precise
+			// interpretation of the refinements given in in the input above.
 			cty.UnknownVal(cty.Number).Refine().
-				NumberRangeLowerBound(cty.NumberIntVal(1), false).
+				NumberRangeLowerBound(cty.NumberIntVal(1), true).
 				NumberRangeUpperBound(cty.NumberIntVal(4), true).NewValue(),
 			0,
 		},
@@ -2365,6 +2369,51 @@ EOT
 			cty.ListVal([]cty.Value{cty.UnknownVal(cty.String)}), // deduced through refinements
 			0,
 		},
+		{
+			`unknown ? "a" : "a"`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"unknown": cty.UnknownVal(cty.Bool),
+				},
+			},
+			cty.StringVal("a"), // both conditional arms are equal, so the result is known regardless of predicate
+			0,
+		},
+		{
+			`unknown ? "a" : marked_a`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"unknown":  cty.UnknownVal(cty.Bool),
+					"marked_a": cty.StringVal("a").Mark("marked"),
+				},
+			},
+			// Even though the two values have equal data, we conservatively
+			// return an unknown value in this case because callers tend to
+			// assume that the marks on a wholly-known value are final, but
+			// we don't actually know yet whether this mark would appear
+			// once the unknown predicate is resolved. We do still return a
+			// refined unknown value though, to propagate at least some
+			// information to downstream expressions.
+			cty.UnknownVal(cty.String).Refine().
+				NotNull().
+				StringPrefixFull("a").
+				NewValue().
+				Mark("marked"),
+			0,
+		},
+		{
+			`unknown ? "beep" : "boop"`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"unknown": cty.UnknownVal(cty.Bool),
+				},
+			},
+			cty.UnknownVal(cty.String).Refine().
+				NotNull().             // neither result is null
+				StringPrefixFull("b"). // both results share a common prefix
+				NewValue(),
+			0,
+		},
 		{ // marked conditional
 			`var.foo ? 1 : 0`,
 			&hcl.EvalContext{
@@ -2377,6 +2426,48 @@ EOT
 			cty.NumberIntVal(1).Mark("sensitive"),
 			0,
 		},
+		{ // marked conditional results
+			`true ? a_m : unused`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"a_m": cty.StringVal("a").Mark("marked"),
+				},
+			},
+			cty.StringVal("a").Mark("marked"),
+			0,
+		},
+		{ // marked conditional results
+			`false ? a_m : b`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"a_m": cty.StringVal("a").Mark("marked"),
+					"b":   cty.StringVal("b"),
+				},
+			},
+			cty.StringVal("b"), // no mark because we know that b is selected
+			0,
+		},
+		{ // marked conditional results
+			`true ? a : b_m`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"a":   cty.StringVal("a"),
+					"b_m": cty.StringVal("b").Mark("marked"),
+				},
+			},
+			cty.StringVal("a"), // no mark because we know that a is selected
+			0,
+		},
+		{ // marked conditional results
+			`false ? unused : b_m`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"b_m": cty.StringVal("b").Mark("marked"),
+				},
+			},
+			cty.StringVal("b").Mark("marked"),
+			0,
+		},
 		{ // auto-converts collection types
 			`true ? listOf1Tuple : listOf0Tuple`,
 			&hcl.EvalContext{
@@ -2386,6 +2477,18 @@ EOT
 				},
 			},
 			cty.ListVal([]cty.Value{cty.ListVal([]cty.Value{cty.True})}),
+			0,
+		},
+		{ // auto-converts collection types even when predicate is unknown
+			`unknown ? listOf1Tuple : listOf0Tuple`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"unknown":      cty.UnknownVal(cty.Bool),
+					"listOf1Tuple": cty.ListVal([]cty.Value{cty.TupleVal([]cty.Value{cty.True})}),
+					"listOf0Tuple": cty.ListVal([]cty.Value{cty.EmptyTupleVal}),
+				},
+			},
+			cty.UnknownVal(cty.List(cty.List(cty.Bool))),
 			0,
 		},
 		{

@@ -318,14 +318,14 @@ trim`,
 			cty.UnknownVal(cty.String).Refine().NotNull().StringPrefixFull(strings.Repeat("_", 128)).NewValue(),
 			0,
 		},
-		{ // all marks are passed through to ensure result is always consistent
+		{ // only marks relevant to the selected arm are passed through to be a precise as possible
 			`hello%{ if false } ${target}%{ endif }`,
 			&hcl.EvalContext{
 				Variables: map[string]cty.Value{
 					"target": cty.StringVal("world").Mark("sensitive"),
 				},
 			},
-			cty.StringVal("hello").Mark("sensitive"),
+			cty.StringVal("hello"),
 			0,
 		},
 		{ // marks from interpolated values are passed through
@@ -377,6 +377,20 @@ trim`,
 				},
 			},
 			cty.StringVal("foobarbaz").Mark("sensitive"),
+			0,
+		},
+		{ // conditionals can cancel marks on interpolated values
+			`%{ for i, s in secrets }%{ if i != 1 }${s}%{ else }skip%{ endif }%{ endfor }`,
+			&hcl.EvalContext{
+				Variables: map[string]cty.Value{
+					"secrets": cty.ListVal([]cty.Value{
+						cty.StringVal("foo").Mark("foo"),
+						cty.StringVal("bar").Mark("bar"),
+						cty.StringVal("baz").Mark("baz"),
+					}),
+				},
+			},
+			cty.StringVal("fooskipbaz").Mark("foo").Mark("baz"),
 			0,
 		},
 		{ // lots of marks!
